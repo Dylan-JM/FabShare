@@ -2,7 +2,7 @@
 
 Share your [Fab](https://www.fab.com) asset library with your team via a single URL — no backend, no accounts, no uploads.
 
-The entire library is scraped from Fab's internal API, compressed with gzip, and encoded into the URL hash. Anyone with the link sees your full gallery rendered client-side.
+The entire library is scraped from Fab, compressed with gzip, and encoded into the URL hash. Anyone with the link sees your full gallery rendered client-side.
 
 ## How it works
 
@@ -32,7 +32,9 @@ window.fetch = async (...args) => {
   } catch {}
   return res;
 };
-console.log('✅ Interceptor active. Refresh the page now, then scroll your full library.');
+console.log(
+  "✅ Interceptor active. Refresh the page now, then scroll your full library.",
+);
 ```
 
 Press Enter, then **refresh the page** (the interceptor must be active before the page loads its data).
@@ -44,17 +46,17 @@ Scroll through your **entire library** so all pages load. Then run this second s
 ```js
 const seen = new Set();
 const assets = window._fabData
-  .filter(item => {
+  .filter((item) => {
     if (seen.has(item.uid)) return false;
     seen.add(item.uid);
     return true;
   })
-  .map(item => ({
+  .map((item) => ({
     title: item.title,
-    category: item.categories?.[0]?.name ?? 'Uncategorized',
-    thumbnail_url: item.thumbnail_url ?? '',
+    category: item.categories?.[0]?.name ?? "Uncategorized",
+    thumbnail_url: item.thumbnail_url ?? "",
     uid: item.uid,
-    price_range: item.price_range ?? 'Free',
+    price_range: item.price_range ?? "Free",
   }));
 copy(JSON.stringify(assets));
 console.log(`✅ Copied ${assets.length} assets. Paste into FabShare.`);
@@ -92,6 +94,7 @@ npm run build   # outputs to out/
 ```
 
 Drop the `out/` folder as your publish directory, or point your host's build settings to:
+
 - **Build command:** `npm run build`
 - **Publish directory:** `out`
 
@@ -119,7 +122,3 @@ lib/
   types.ts          # FabAsset interface
   utils.ts          # cn() helper
 ```
-
-## Why intercept fetch instead of scraping the DOM?
-
-Fab's library page is a React SPA that fetches listing data via internal API calls as you scroll. Reading the DOM gives you UUIDs and "Uncategorized" for everything because React hasn't finished rendering the data into the DOM yet. Intercepting `window.fetch` captures the raw API responses — real titles, categories, and thumbnails.
