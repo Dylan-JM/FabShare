@@ -1,7 +1,7 @@
 import { Redis } from "@upstash/redis";
+import { NextResponse } from "next/server";
 
 const kv = Redis.fromEnv();
-import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   const body = await req.json() as { hash?: string; slug?: string };

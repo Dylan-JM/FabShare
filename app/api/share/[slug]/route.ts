@@ -1,7 +1,7 @@
 import { Redis } from "@upstash/redis";
+import { NextResponse } from "next/server";
 
 const kv = Redis.fromEnv();
-import { NextResponse } from "next/server";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
