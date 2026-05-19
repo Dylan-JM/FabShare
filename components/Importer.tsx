@@ -6,54 +6,102 @@ import { parseAssets } from "@/lib/parser";
 import type { FabAsset } from "@/lib/types";
 import CopyButton from "./CopyButton";
 
-// Single script — no refresh needed.
-// Uses the Performance API to find the endpoint Fab already called when the
-// page loaded, then paginates through it directly using the active session.
-const SCRAPER = `(async () => {
-  // Find the endpoint Fab already used to load this page
-  const urls = performance.getEntriesByType('resource')
-    .map(r => r.name)
-    .filter(u => u.includes('www.fab.com') && u.includes('limit='));
+const SCRAPER = `(async function scrapeFabLibrary() {
+  console.log("🔍 Starting Fab library scrape...");
 
-  const raw = urls.find(u => /\\/i\\/.+limit=/.test(u)) || urls[0];
+  function fmtItem(item, uid) {
+    const min = item.price_range?.min;
+    return {
+      name:      item.title || item.name || "Untitled",
+      category:  item.categories?.[0]?.name || item.category?.name || item.category || "Uncategorized",
+      thumbnail: item.thumbnail_url || item.cover_image || item.images?.[0]?.url || "",
+      url:       \`https://www.fab.com/listings/\${uid || item.uid}\`,
+      price:     min != null ? (min === 0 ? "Free" : \`$\${min}\`) : item.is_free ? "Free" : "Paid",
+    };
+  }
 
-  if (!raw) {
-    console.error('❌ Could not detect the API endpoint. Make sure you are on fab.com/library and the page has fully loaded.');
+  const assets = [];
+
+  // ── Strategy 1: __NEXT_DATA__ already in this page ───────
+  try {
+    const nd = window.__NEXT_DATA__;
+    if (nd) {
+      const walk = (o, d = 0) => {
+        if (d > 8 || !o || typeof o !== "object") return null;
+        if (Array.isArray(o) && o.length > 0 && o[0]?.uid) return o;
+        for (const v of Object.values(o)) { const f = walk(v, d + 1); if (f) return f; }
+        return null;
+      };
+      const listings = walk(nd.props?.pageProps);
+      if (listings?.length) {
+        listings.forEach(item => assets.push(fmtItem(item, item.uid)));
+        console.log(\`✅ Found \${assets.length} assets in page data\`);
+      }
+    }
+  } catch {}
+
+  // ── Strategy 2: UIDs from DOM → fetch each listing page ──
+  // The internal /i/listings/ API doesn't exist, but each public listing page
+  // embeds its full data in __NEXT_DATA__ which we can parse from the HTML.
+  if (!assets.length) {
+    const seen = new Set();
+    document.querySelectorAll("a[href*='/listings/']").forEach(a => {
+      const m = a.href.match(/listings\\/([a-f0-9-]{36})/i);
+      if (m && !seen.has(m[1])) seen.add(m[1]);
+    });
+    const uids = [...seen];
+
+    if (!uids.length) {
+      console.error("❌ No listing links found. Scroll to the bottom of fab.com/library so all assets load, then re-run.");
+      return;
+    }
+
+    console.log(\`Found \${uids.length} listings. Fetching each page for metadata...\`);
+
+    const BATCH = 6;
+    for (let i = 0; i < uids.length; i += BATCH) {
+      await Promise.all(uids.slice(i, i + BATCH).map(async uid => {
+        try {
+          const html = await (await fetch(\`/listings/\${uid}\`)).text();
+
+          // Pull __NEXT_DATA__ from the listing page HTML
+          const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\\s\\S]*?)<\\/script>/);
+          if (m) {
+            const pp = JSON.parse(m[1])?.props?.pageProps ?? {};
+            const item = pp.listing ?? pp.asset ?? pp.product ?? pp.data
+                      ?? Object.values(pp).find(v => v && typeof v === "object" && v.uid === uid);
+            if (item?.title) { assets.push(fmtItem(item, uid)); return; }
+          }
+
+          // OG tag fallback (title + cover image at minimum)
+          const title = html.match(/property="og:title"\\s+content="([^"]+)"/)?.[1]
+                     || html.match(/<title>([^<|]+)/)?.[1]?.trim();
+          const thumb = html.match(/property="og:image"\\s+content="([^"]+)"/)?.[1];
+          assets.push({ name: title || uid, category: "Uncategorized", thumbnail: thumb || "",
+                        url: \`https://www.fab.com/listings/\${uid}\`, price: "" });
+        } catch {}
+      }));
+      console.log(\`  \${Math.min(i + BATCH, uids.length)}/\${uids.length} done...\`);
+      await new Promise(r => setTimeout(r, 120));
+    }
+  }
+
+  if (!assets.length) {
+    console.error("❌ No assets found. Are you logged in and on fab.com/library?");
     return;
   }
 
-  const base = new URL(raw);
-  base.searchParams.set('limit', '48');
-  base.searchParams.set('offset', '0');
-
-  const all = [];
-  let next = base.toString();
-
-  while (next) {
-    const r = await fetch(next, { credentials: 'include' });
-    if (!r.ok) { console.error('Request failed:', r.status, next); break; }
-    const j = await r.json();
-    if (!j.results?.length) break;
-    all.push(...j.results);
-    next = j.next || null;
-    console.log(\`📦 \${all.length} assets loaded...\`);
+  const output = JSON.stringify(assets, null, 2);
+  console.log(\`\\n✅ \${assets.length} assets ready!\`);
+  console.log("FAB_ASSETS_START");
+  console.log(output);
+  console.log("FAB_ASSETS_END");
+  try {
+    await navigator.clipboard.writeText(output);
+    console.log("✅ Copied to clipboard automatically!");
+  } catch {
+    console.log("⚠️ Auto-copy blocked — manually copy the JSON between the markers above.");
   }
-
-  if (!all.length) {
-    console.error('❌ No assets returned. Are you logged in and on fab.com/library?');
-    return;
-  }
-
-  const assets = all.map(item => ({
-    name: item.title,
-    category: item.categories?.[0]?.name ?? 'Uncategorized',
-    thumbnail: item.thumbnail_url ?? '',
-    url: \`https://www.fab.com/listings/\${item.uid}\`,
-    price: item.price_range ?? 'Free',
-  }));
-
-  copy(JSON.stringify(assets));
-  console.log(\`✅ Copied \${assets.length} assets! Paste into FabShare.\`);
 })();`;
 
 const DEMO: FabAsset[] = [
@@ -110,12 +158,11 @@ export default function Importer({ onImport }: ImporterProps) {
         </p>
 
         {/* Step 1 */}
-        <Step n={1} title='Go to fab.com/library, open DevTools (F12 → Console), paste and run this'>
+        <Step n={1} title="Go to fab.com/library, scroll all the way to the bottom, then open DevTools (F12 → Console) and run this">
           <CodeBlock code={SCRAPER} />
           <p style={{ fontSize: 12, color: "#6b6b80", marginTop: 10 }}>
-            The script finds Fab&apos;s API automatically and paginates through your full library.
-            Watch the console — it logs progress and copies the result to your clipboard when done.
-            <strong style={{ color: "#e8e8ee" }}> No refresh needed.</strong>
+            Tries Fab&apos;s internal API first (auto-paginates), then falls back to DOM scraping.
+            Watch the console for progress. The output is copied to your clipboard automatically.
           </p>
         </Step>
 
