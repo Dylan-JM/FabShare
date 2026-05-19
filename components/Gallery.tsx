@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { FabAsset } from "@/lib/types";
 
 interface GalleryProps {
@@ -21,18 +21,12 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
   const [selectedSub, setSelectedSub] = useState<string | null>(null);
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
-  // bit.ly state
-  const [bitlyToken, setBitlyToken] = useState("");
-  const [tokenInput, setTokenInput] = useState("");
-  const [showTokenInput, setShowTokenInput] = useState(false);
-  const [shortUrl, setShortUrl] = useState("");
+  const [showSlugInput, setShowSlugInput] = useState(false);
+  const [slugInput, setSlugInput] = useState("");
+  const [shareUrl, setShareUrl] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
-  const [shortCopied, setShortCopied] = useState(false);
-
-  useEffect(() => {
-    setBitlyToken(localStorage.getItem("fabshare_bitly_token") || "");
-  }, []);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const categoryTree = useMemo(() => {
     const tree: Record<string, { count: number; subs: Record<string, number> }> = {};
@@ -63,54 +57,34 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
     });
   }, [assets, search, selectedCat, selectedSub]);
 
-  const doShorten = async (token: string) => {
+  const doGenerate = async () => {
     setIsGenerating(true);
     setGenerateError("");
+    setShareUrl("");
+    const hash = window.location.hash.slice(1);
+    const body: { hash: string; slug?: string } = { hash };
+    const trimmed = slugInput.trim().toLowerCase();
+    if (trimmed) body.slug = trimmed;
     try {
-      const res = await fetch("https://api-ssl.bitly.com/v4/shorten", {
+      const res = await fetch("/api/share", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ long_url: window.location.href }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status === 401) {
-          setBitlyToken("");
-          localStorage.removeItem("fabshare_bitly_token");
-          setShowTokenInput(true);
-        }
-        throw new Error((data as { message?: string }).message || `bit.ly error ${res.status}`);
-      }
-      const link = (data as { link: string }).link;
-      setShortUrl(link);
-      await navigator.clipboard.writeText(link).catch(() => {});
-      setShortCopied(true);
-      setTimeout(() => setShortCopied(false), 2500);
+      const data = await res.json() as { slug?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      const url = `${window.location.origin}/s/${data.slug!}`;
+      setShareUrl(url);
+      setShowSlugInput(false);
+      setSlugInput("");
+      await navigator.clipboard.writeText(url).catch(() => {});
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2500);
     } catch (e) {
       setGenerateError(e instanceof Error ? e.message : "Failed to generate link");
     } finally {
       setIsGenerating(false);
     }
-  };
-
-  const handleGenerateLink = () => {
-    setGenerateError("");
-    setShortUrl("");
-    if (bitlyToken) {
-      doShorten(bitlyToken);
-    } else {
-      setTokenInput("");
-      setShowTokenInput(true);
-    }
-  };
-
-  const saveTokenAndGenerate = () => {
-    const token = tokenInput.trim();
-    if (!token) return;
-    localStorage.setItem("fabshare_bitly_token", token);
-    setBitlyToken(token);
-    setShowTokenInput(false);
-    doShorten(token);
   };
 
   const handleCatClick = (cat: string) => {
@@ -164,24 +138,24 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
             {filtered.length} of {assets.length}
           </span>
 
-          {shortUrl ? (
+          {shareUrl ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <a
-                href={shortUrl}
+                href={shareUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ fontSize: 13, color: "#e8622a", fontFamily: "monospace", whiteSpace: "nowrap" }}
               >
-                {shortUrl}
+                {shareUrl}
               </a>
               <button
-                onClick={() => { navigator.clipboard.writeText(shortUrl); setShortCopied(true); setTimeout(() => setShortCopied(false), 2500); }}
+                onClick={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 2500); }}
                 style={{ background: "transparent", border: "1px solid #ffffff0f", color: "#6b6b80", padding: "5px 12px", borderRadius: 8, fontFamily: "inherit", fontSize: 12, cursor: "pointer" }}
               >
-                {shortCopied ? "✓ Copied!" : "Copy"}
+                {shareCopied ? "✓ Copied!" : "Copy"}
               </button>
               <button
-                onClick={() => { setShortUrl(""); setGenerateError(""); }}
+                onClick={() => { setShareUrl(""); setGenerateError(""); }}
                 title="Clear"
                 style={{ background: "none", border: "none", color: "#6b6b80", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}
               >
@@ -190,7 +164,7 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
             </div>
           ) : (
             <button
-              onClick={handleGenerateLink}
+              onClick={() => { setShowSlugInput(v => !v); setGenerateError(""); }}
               disabled={isGenerating}
               style={{
                 background: "#e8622a", color: "#fff", border: "none",
@@ -204,36 +178,33 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
             </button>
           )}
 
-          {generateError && !showTokenInput && (
+          {generateError && !showSlugInput && (
             <span style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, fontSize: 12, color: "#e8622a", whiteSpace: "nowrap", background: "#0a0a0c", padding: "4px 8px", borderRadius: 6 }}>
               {generateError}
             </span>
           )}
 
-          {/* bit.ly token input popover */}
-          {showTokenInput && (
+          {showSlugInput && (
             <div style={{
               position: "absolute", top: "calc(100% + 10px)", right: 0, zIndex: 200,
               background: "#18181f", border: "1px solid #ffffff1a", borderRadius: 12,
-              padding: 20, width: 310, boxShadow: "0 12px 40px #00000090",
+              padding: 20, width: 300, boxShadow: "0 12px 40px #00000090",
             }}>
               <p style={{ fontSize: 13, fontWeight: 500, color: "#e8e8ee", marginBottom: 6 }}>
-                bit.ly access token
+                Choose a name (optional)
               </p>
               <p style={{ fontSize: 12, color: "#6b6b80", marginBottom: 12, lineHeight: 1.5 }}>
-                Get one free at{" "}
-                <a href="https://app.bitly.com/settings/api" target="_blank" rel="noopener noreferrer" style={{ color: "#e8622a" }}>
-                  app.bitly.com → Settings → API
-                </a>
-                . Saved to this browser only.
+                Leave blank for a random short link, or pick something like{" "}
+                <span style={{ color: "#e8e8ee" }}>dylanslibrary</span>.
               </p>
               <input
                 autoFocus
-                type="password"
-                value={tokenInput}
-                onChange={e => setTokenInput(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && saveTokenAndGenerate()}
-                placeholder="Paste token here…"
+                type="text"
+                value={slugInput}
+                onChange={e => setSlugInput(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                onKeyDown={e => e.key === "Enter" && doGenerate()}
+                placeholder="e.g. dylanslibrary"
+                maxLength={50}
                 style={{
                   width: "100%", background: "#111116", border: "1px solid #ffffff1a",
                   borderRadius: 7, padding: "8px 12px", color: "#e8e8ee",
@@ -248,17 +219,17 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
               )}
               <div style={{ display: "flex", gap: 8 }}>
                 <button
-                  onClick={() => { setShowTokenInput(false); setGenerateError(""); }}
+                  onClick={() => { setShowSlugInput(false); setGenerateError(""); setSlugInput(""); }}
                   style={{ flex: 1, padding: "8px", background: "none", border: "1px solid #ffffff1a", borderRadius: 7, color: "#6b6b80", cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={saveTokenAndGenerate}
-                  disabled={!tokenInput.trim()}
-                  style={{ flex: 1, padding: "8px", background: "#e8622a", border: "none", borderRadius: 7, color: "#fff", cursor: tokenInput.trim() ? "pointer" : "not-allowed", opacity: tokenInput.trim() ? 1 : 0.4, fontFamily: "inherit", fontSize: 13, fontWeight: 500 }}
+                  onClick={doGenerate}
+                  disabled={isGenerating}
+                  style={{ flex: 1, padding: "8px", background: "#e8622a", border: "none", borderRadius: 7, color: "#fff", cursor: isGenerating ? "not-allowed" : "pointer", opacity: isGenerating ? 0.5 : 1, fontFamily: "inherit", fontSize: 13, fontWeight: 500 }}
                 >
-                  Save & Generate
+                  {isGenerating ? "Saving…" : "Generate →"}
                 </button>
               </div>
             </div>

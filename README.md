@@ -1,18 +1,16 @@
 # FabShare
 
-Share your [Fab](https://www.fab.com) asset library with your team via a single URL — no backend, no accounts, no uploads.
+Share your [Fab](https://www.fab.com) asset library with your team via a short, readable URL.
 
-The entire library is scraped from Fab, compressed with gzip, and encoded into the URL hash. Anyone with the link sees your full gallery rendered client-side.
+The scraper runs in your browser's DevTools console, extracts your library with 12 concurrent workers, and posts the compressed data to a Vercel KV backend. Anyone with the link sees your full gallery — categories, thumbnails, prices — rendered client-side.
 
 ## How it works
 
 ```
-You (fab.com/library) → run script → copy JSON → generate URL → teammate opens link → gallery
+fab.com/library → run script → copy JSON → paste → pick a name → yoursite.com/s/dylanslibrary
 ```
 
-The URL looks like: `yoursite.com/#eJyrVkqtSi0...`
-
-Everything is in the hash — no server ever sees your data.
+The JSON is gzip-compressed and stored server-side. The shared URL is just a short slug — no data in the URL itself.
 
 ## Using the app
 
@@ -24,16 +22,18 @@ Go to [fab.com/library](https://www.fab.com/library), log in, and scroll all the
 
 Open DevTools (`F12 → Console`), copy the script from the app's **Step 1** panel, and paste it into the console.
 
-The script works entirely on Fab's public listing pages — no private API calls:
+The scraper:
+- Collects listing UIDs from visible links on the page
+- Fetches each listing page concurrently (12 workers) to extract title, category, subcategory, thumbnail, and price
+- Parses categories from `/category/slug/sub-slug` hrefs — same hierarchy Fab uses in its own sidebar
 
-1. Looks for existing asset data already embedded in the page
-2. Falls back to collecting listing UIDs from visible links and fetching each listing page to read its title, category, thumbnail, and price
-
-Watch the console for progress. When it finishes you'll see `✅ X assets ready!` and the JSON is copied to your clipboard automatically.
+Watch the console for progress (`20/340 done…`). When it finishes run `copy(window._fabResult)` in the console to copy the JSON.
 
 ### Step 3 — Generate the link
 
-Paste the copied JSON into the app and click **Generate Shareable Link**. Share the URL with your team — no account needed to view it.
+Paste the JSON into the app and click **Generate Shareable Link**. A popover lets you optionally choose a custom name (e.g. `dylanslibrary`) — leave it blank for a random 8-character slug.
+
+Your link will be `yoursite.com/s/dylanslibrary`. It's automatically copied to your clipboard.
 
 ---
 
@@ -48,43 +48,44 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Deploying
+The "Generate Shareable Link" feature requires Vercel KV — see below.
 
-### Vercel (recommended)
+## Deploying to Vercel
 
-Connect the repo to Vercel — it auto-detects Next.js and deploys with zero config.
+1. Connect the repo to Vercel — it auto-detects Next.js and deploys with zero config.
+2. In the Vercel dashboard go to **Storage → Upstash → Create**, choose **Redis**, and attach it to your project.
+3. Vercel automatically injects the required env vars (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`).
 
-### Netlify / GitHub Pages
-
-```bash
-npm run build   # outputs to out/
-```
-
-Drop the `out/` folder as your publish directory, or point your host's build settings to:
-
-- **Build command:** `npm run build`
-- **Publish directory:** `out`
+That's it. Shared links (`/s/<slug>`) resolve via the API route and render the gallery.
 
 ## Tech stack
 
-- [Next.js 16](https://nextjs.org) — static export (`output: 'export'`)
-- [Tailwind CSS v4](https://tailwindcss.com)
-- [fflate](https://github.com/101arrowz/fflate) — gzip compression for the URL payload
-- [lucide-react](https://lucide.dev) — icons
+- [Next.js 16](https://nextjs.org) — App Router with API routes
+- [fflate](https://github.com/101arrowz/fflate) — gzip compression for the library payload
+- [@upstash/redis](https://upstash.com) — serverless Redis for short slug storage
+- TypeScript throughout
 
 ## Project structure
 
 ```
 app/
-  layout.tsx        # fonts (Bebas Neue + DM Sans), metadata
-  page.tsx          # hash router — landing vs gallery
-  globals.css       # dark theme tokens
+  layout.tsx              # fonts (Bebas Neue + DM Sans), metadata
+  page.tsx                # hash router — landing vs gallery
+  globals.css             # dark theme tokens
+  api/
+    share/
+      route.ts            # POST /api/share — store hash, return slug
+      [slug]/
+        route.ts          # GET /api/share/[slug] — look up hash by slug
+  s/
+    [slug]/
+      page.tsx            # shared gallery page — fetches hash, renders Gallery
 components/
-  Importer.tsx      # scraper instructions + JSON paste
-  Gallery.tsx       # search, category filters, card grid
-  CopyButton.tsx    # clipboard button with confirmation state
+  Importer.tsx            # scraper instructions + JSON paste UI
+  Gallery.tsx             # category sidebar, search, card grid, share popover
+  CopyButton.tsx          # clipboard button with confirmation state
 lib/
-  codec.ts          # encode/decode (gzip + base64url)
-  parser.ts         # robust JSON parser for scraper output
-  types.ts          # FabAsset interface
+  codec.ts                # encode/decode (gzip + base64url via fflate)
+  parser.ts               # robust JSON parser for scraper output
+  types.ts                # FabAsset interface
 ```
