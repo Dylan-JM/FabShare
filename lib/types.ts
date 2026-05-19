@@ -4,6 +4,7 @@ export interface FabAsset {
   thumbnail: string;
   url: string;
   price: string;
+  subcategory?: string;
+  path?: string;
   _index?: number;
-  _needsEnrich?: boolean;
 }

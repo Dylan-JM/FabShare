@@ -7,7 +7,7 @@ The entire library is scraped from Fab, compressed with gzip, and encoded into t
 ## How it works
 
 ```
-You (fab.com) → scrape → paste JSON → compressed URL → teammate opens link → gallery
+You (fab.com/library) → run script → copy JSON → generate URL → teammate opens link → gallery
 ```
 
 The URL looks like: `yoursite.com/#eJyrVkqtSi0...`
@@ -16,57 +16,24 @@ Everything is in the hash — no server ever sees your data.
 
 ## Using the app
 
-### Step 1 — Intercept Fab's API
+### Step 1 — Scroll your library
 
-Open [fab.com/library](https://www.fab.com/library), open the browser console (`F12 → Console`), and paste:
+Go to [fab.com/library](https://www.fab.com/library), log in, and scroll all the way to the **bottom** so every asset card is loaded.
 
-```js
-const _fetch = window.fetch;
-window._fabData = [];
-window.fetch = async (...args) => {
-  const res = await _fetch(...args);
-  const clone = res.clone();
-  try {
-    const j = await clone.json();
-    if (j?.results?.length) window._fabData.push(...j.results);
-  } catch {}
-  return res;
-};
-console.log(
-  "✅ Interceptor active. Refresh the page now, then scroll your full library.",
-);
-```
+### Step 2 — Run the scraper
 
-Press Enter, then **refresh the page** (the interceptor must be active before the page loads its data).
+Open DevTools (`F12 → Console`), copy the script from the app's **Step 1** panel, and paste it into the console.
 
-### Step 2 — Collect the data
+The script works entirely on Fab's public listing pages — no private API calls:
 
-Scroll through your **entire library** so all pages load. Then run this second snippet:
+1. Looks for existing asset data already embedded in the page
+2. Falls back to collecting listing UIDs from visible links and fetching each listing page to read its title, category, thumbnail, and price
 
-```js
-const seen = new Set();
-const assets = window._fabData
-  .filter((item) => {
-    if (seen.has(item.uid)) return false;
-    seen.add(item.uid);
-    return true;
-  })
-  .map((item) => ({
-    title: item.title,
-    category: item.categories?.[0]?.name ?? "Uncategorized",
-    thumbnail_url: item.thumbnail_url ?? "",
-    uid: item.uid,
-    price_range: item.price_range ?? "Free",
-  }));
-copy(JSON.stringify(assets));
-console.log(`✅ Copied ${assets.length} assets. Paste into FabShare.`);
-```
-
-This deduplicates results and copies them to your clipboard.
+Watch the console for progress. When it finishes you'll see `✅ X assets ready!` and the JSON is copied to your clipboard automatically.
 
 ### Step 3 — Generate the link
 
-Paste the JSON into the app and click **Generate Shareable Link**. Share the URL with your team.
+Paste the copied JSON into the app and click **Generate Shareable Link**. Share the URL with your team — no account needed to view it.
 
 ---
 
@@ -113,12 +80,11 @@ app/
   page.tsx          # hash router — landing vs gallery
   globals.css       # dark theme tokens
 components/
-  LandingPage.tsx   # scraper instructions + JSON paste
-  GalleryPage.tsx   # search, category filters, card grid
-  AssetCard.tsx     # thumbnail card → fab.com/listings/<uid>
+  Importer.tsx      # scraper instructions + JSON paste
+  Gallery.tsx       # search, category filters, card grid
   CopyButton.tsx    # clipboard button with confirmation state
 lib/
   codec.ts          # encode/decode (gzip + base64url)
+  parser.ts         # robust JSON parser for scraper output
   types.ts          # FabAsset interface
-  utils.ts          # cn() helper
 ```

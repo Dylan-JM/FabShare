@@ -1,7 +1,5 @@
 import type { FabAsset } from "./types";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export function parseAssets(raw: string): FabAsset[] {
   let s = raw
     .replace(/FAB_ASSETS_START|>>>FAB_START<<<|FAB_ASSETS_END|>>>FAB_END<<</g, "")
@@ -35,7 +33,6 @@ export function parseAssets(raw: string): FabAsset[] {
   return parsed.map((item, i) => {
     const raw = item as Record<string, unknown>;
 
-    // Support both old scraper shape (name/url) and new shape (title/uid)
     let name = String(raw.name || raw.title || "");
     try { name = decodeURIComponent(name); } catch { /* ignore */ }
 
@@ -46,20 +43,17 @@ export function parseAssets(raw: string): FabAsset[] {
       ? `https://www.fab.com/listings/${uid}`
       : "";
 
-    const needsEnrich = UUID_RE.test(name.trim()) || !name || name === "Loading…";
-
-    const price = raw.price
-      ?? raw.price_range
-      ?? "";
+    const price = raw.price ?? raw.price_range ?? "";
 
     return {
-      name: needsEnrich ? "…" : name,
-      category: String(raw.category || (raw as Record<string, unknown>).categories || "Uncategorized"),
+      name: name || "Untitled",
+      category: String(raw.category || raw.categories || "Uncategorized"),
       thumbnail: String(raw.thumbnail || raw.thumbnail_url || ""),
       url,
       price: String(price),
+      subcategory: raw.subcategory ? String(raw.subcategory) : undefined,
+      path: raw.path ? String(raw.path) : undefined,
       _index: i,
-      _needsEnrich: needsEnrich,
     };
   });
 }

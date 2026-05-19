@@ -8,145 +8,129 @@ import CopyButton from "./CopyButton";
 
 const SCRAPER = `(async function scrapeFabLibrary() {
   console.log("🔍 Starting Fab library scrape...");
+  const t0 = performance.now();
 
-  function fmtItem(item, uid) {
-    const min = item.price_range?.min;
+  function extractCategoriesFromHtml(html) {
+    const matches = [...html.matchAll(/href="\\/category\\/([^"]+)"/g)];
+    if (!matches.length) return { category: null, subcategory: null, path: null };
+
+    const slugs = [];
+    for (const m of matches) {
+      for (const part of m[1].split("/")) {
+        if (part && !slugs.includes(part)) slugs.push(part);
+      }
+    }
+
+    const prettify = slug => slug
+      .split("-")
+      .map(w => w.length <= 2 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+
+    const pretty = slugs.map(prettify);
     return {
-      name:      item.title || item.name || "Untitled",
-      category:  item.categories?.[0]?.name || item.category?.name || item.category || "Uncategorized",
-      thumbnail: item.thumbnail_url || item.cover_image || item.images?.[0]?.url || "",
-      url:       \`https://www.fab.com/listings/\${uid || item.uid}\`,
-      price:     min != null ? (min === 0 ? "Free" : \`$\${min}\`) : item.is_free ? "Free" : "Paid",
+      category: pretty[0] || null,
+      subcategory: pretty[1] || null,
+      path: pretty.join(" / "),
     };
   }
 
+  function parseListing(html, uid) {
+    const cats = extractCategoriesFromHtml(html);
+    const title = html.match(/property="og:title"\\s+content="([^"]+)"/)?.[1]
+               || html.match(/<title>([^<|]+)/)?.[1]?.trim()
+               || uid;
+    const thumb = html.match(/property="og:image"\\s+content="([^"]+)"/)?.[1] || "";
+
+    let price = "";
+    const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\\s\\S]*?)<\\/script>/);
+    if (m) {
+      try {
+        const pp = JSON.parse(m[1])?.props?.pageProps ?? {};
+        const item = pp.listing ?? pp.asset ?? pp.product ?? pp.data
+                  ?? Object.values(pp).find(v => v && typeof v === "object" && v.uid === uid);
+        const min = item?.price_range?.min;
+        price = min != null ? (min === 0 ? "Free" : \`$\${min}\`) : item?.is_free ? "Free" : "";
+      } catch {}
+    }
+
+    return {
+      name: title,
+      category: cats.category || "Uncategorized",
+      subcategory: cats.subcategory || "",
+      path: cats.path || "Uncategorized",
+      thumbnail: thumb,
+      url: \`https://www.fab.com/listings/\${uid}\`,
+      price,
+    };
+  }
+
+  const seen = new Set();
+  document.querySelectorAll("a[href*='/listings/']").forEach(a => {
+    const m = a.href.match(/listings\\/([a-f0-9-]{36})/i);
+    if (m && !seen.has(m[1])) seen.add(m[1]);
+  });
+  const uids = [...seen];
+
+  if (!uids.length) {
+    console.error("❌ No listing links found. Scroll to the bottom of fab.com/library so all assets load, then re-run.");
+    return;
+  }
+
+  console.log(\`Found \${uids.length} listings. Fetching with concurrency...\`);
+
+  const CONCURRENCY = 12;
   const assets = [];
+  let _debugged = false;
+  let nextIdx = 0;
+  let completed = 0;
 
-  // ── Strategy 1: __NEXT_DATA__ already in this page ───────
-  try {
-    const nd = window.__NEXT_DATA__;
-    if (nd) {
-      const walk = (o, d = 0) => {
-        if (d > 8 || !o || typeof o !== "object") return null;
-        if (Array.isArray(o) && o.length > 0 && o[0]?.uid) return o;
-        for (const v of Object.values(o)) { const f = walk(v, d + 1); if (f) return f; }
-        return null;
-      };
-      const listings = walk(nd.props?.pageProps);
-      if (listings?.length) {
-        listings.forEach(item => assets.push(fmtItem(item, item.uid)));
-        console.log(\`✅ Found \${assets.length} assets in page data\`);
+  async function worker() {
+    while (true) {
+      const idx = nextIdx++;
+      if (idx >= uids.length) return;
+      const uid = uids[idx];
+      try {
+        const html = await (await fetch(\`/listings/\${uid}\`)).text();
+        if (!_debugged) {
+          _debugged = true;
+          const raw = [...html.matchAll(/href="\\/category\\/([^"]+)"/g)].map(m => m[1]);
+          console.log("📦 Raw breadcrumb hrefs (first listing):", raw);
+        }
+        assets.push(parseListing(html, uid));
+      } catch (e) {
+        console.warn(\`Failed to fetch \${uid}:\`, e.message);
       }
-    }
-  } catch {}
-
-  // ── Strategy 2: UIDs from DOM → fetch each listing page ──
-  // The internal /i/listings/ API doesn't exist, but each public listing page
-  // embeds its full data in __NEXT_DATA__ which we can parse from the HTML.
-  if (!assets.length) {
-    const seen = new Set();
-    document.querySelectorAll("a[href*='/listings/']").forEach(a => {
-      const m = a.href.match(/listings\\/([a-f0-9-]{36})/i);
-      if (m && !seen.has(m[1])) seen.add(m[1]);
-    });
-    const uids = [...seen];
-
-    if (!uids.length) {
-      console.error("❌ No listing links found. Scroll to the bottom of fab.com/library so all assets load, then re-run.");
-      return;
-    }
-
-    console.log(\`Found \${uids.length} listings. Fetching each page for metadata...\`);
-
-    const BATCH = 6;
-    for (let i = 0; i < uids.length; i += BATCH) {
-      await Promise.all(uids.slice(i, i + BATCH).map(async uid => {
-        try {
-          const html = await (await fetch(\`/listings/\${uid}\`)).text();
-
-          // Pull __NEXT_DATA__ from the listing page HTML
-          const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\\s\\S]*?)<\\/script>/);
-          if (m) {
-            const pp = JSON.parse(m[1])?.props?.pageProps ?? {};
-            const item = pp.listing ?? pp.asset ?? pp.product ?? pp.data
-                      ?? Object.values(pp).find(v => v && typeof v === "object" && v.uid === uid);
-            if (item?.title) { assets.push(fmtItem(item, uid)); return; }
-          }
-
-          // OG tag fallback (title + cover image at minimum)
-          const title = html.match(/property="og:title"\\s+content="([^"]+)"/)?.[1]
-                     || html.match(/<title>([^<|]+)/)?.[1]?.trim();
-          const thumb = html.match(/property="og:image"\\s+content="([^"]+)"/)?.[1];
-          assets.push({ name: title || uid, category: "Uncategorized", thumbnail: thumb || "",
-                        url: \`https://www.fab.com/listings/\${uid}\`, price: "" });
-        } catch {}
-      }));
-      console.log(\`  \${Math.min(i + BATCH, uids.length)}/\${uids.length} done...\`);
-      await new Promise(r => setTimeout(r, 120));
+      completed++;
+      if (completed % 20 === 0 || completed === uids.length) {
+        console.log(\`  \${completed}/\${uids.length} done...\`);
+      }
     }
   }
 
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
   if (!assets.length) {
-    console.error("❌ No assets found. Are you logged in and on fab.com/library?");
+    console.error("❌ No assets found.");
     return;
   }
 
   const output = JSON.stringify(assets, null, 2);
-  console.log(\`\\n✅ \${assets.length} assets ready!\`);
-  console.log("FAB_ASSETS_START");
+  window._fabResult = output;
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  console.log(\`\\n✅ \${assets.length} assets ready in \${elapsed}s!\`);
   console.log(output);
-  console.log("FAB_ASSETS_END");
-  try {
-    await navigator.clipboard.writeText(output);
-    console.log("✅ Copied to clipboard automatically!");
-  } catch {
-    console.log("⚠️ Auto-copy blocked — manually copy the JSON between the markers above.");
-  }
+  console.log("\\n💡 To copy: run this in the console: copy(window._fabResult)");
+  console.log("💡 Or to download as a file, run:");
+  console.log(\`   const b=new Blob([window._fabResult],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='fab-library.json';a.click();\`);
 })();`;
 
 const DEMO: FabAsset[] = [
-  {
-    name: "Modular Dungeon Pack",
-    category: "Environments",
-    thumbnail: "",
-    url: "https://www.fab.com",
-    price: "$49.99",
-  },
-  {
-    name: "Fantasy Character Bundle",
-    category: "Characters",
-    thumbnail: "",
-    url: "https://www.fab.com",
-    price: "Free",
-  },
-  {
-    name: "Sci-Fi Corridor Kit",
-    category: "Environments",
-    thumbnail: "",
-    url: "https://www.fab.com",
-    price: "$39.99",
-  },
-  {
-    name: "Magic Spell Effects Vol.3",
-    category: "VFX",
-    thumbnail: "",
-    url: "https://www.fab.com",
-    price: "$34.99",
-  },
-  {
-    name: "Creature Animations 200+",
-    category: "Animations",
-    thumbnail: "",
-    url: "https://www.fab.com",
-    price: "$79.00",
-  },
-  {
-    name: "Advanced Footstep System",
-    category: "Blueprints",
-    thumbnail: "",
-    url: "https://www.fab.com",
-    price: "Free",
-  },
+  { name: "Modular Dungeon Pack", category: "3D", subcategory: "Environments", path: "3D / Environments", thumbnail: "", url: "https://www.fab.com", price: "$49.99" },
+  { name: "Fantasy Character Bundle", category: "3D", subcategory: "Characters & Creatures", path: "3D / Characters & Creatures", thumbnail: "", url: "https://www.fab.com", price: "Free" },
+  { name: "Sci-Fi Corridor Kit", category: "3D", subcategory: "Environments", path: "3D / Environments", thumbnail: "", url: "https://www.fab.com", price: "$39.99" },
+  { name: "Magic Spell Effects Vol.3", category: "VFX", subcategory: "", path: "VFX", thumbnail: "", url: "https://www.fab.com", price: "$34.99" },
+  { name: "Creature Animations 200+", category: "Animations", subcategory: "", path: "Animations", thumbnail: "", url: "https://www.fab.com", price: "$79.00" },
+  { name: "Advanced Footstep System", category: "Blueprints", subcategory: "", path: "Blueprints", thumbnail: "", url: "https://www.fab.com", price: "Free" },
 ];
 
 interface ImporterProps {
@@ -171,7 +155,6 @@ export default function Importer({ onImport }: ImporterProps) {
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0c" }}>
-      {/* Header */}
       <header
         style={{
           position: "sticky",
@@ -199,7 +182,6 @@ export default function Importer({ onImport }: ImporterProps) {
         </span>
       </header>
 
-      {/* Body */}
       <div
         style={{
           maxWidth: 680,
@@ -232,19 +214,18 @@ export default function Importer({ onImport }: ImporterProps) {
           link.
         </p>
 
-        {/* Step 1 */}
         <Step
           n={1}
           title="Go to fab.com/library, scroll all the way to the bottom, then open DevTools (F12 → Console) and run this"
         >
           <CodeBlock code={SCRAPER} />
           <p style={{ fontSize: 12, color: "#6b6b80", marginTop: 10 }}>
-            Watch the console for progress. The output is copied to your
-            clipboard automatically.
+            Watch the console for progress. When done, run{" "}
+            <code style={{ color: "#e8e8ee" }}>copy(window._fabResult)</code>{" "}
+            in the console to copy the JSON.
           </p>
         </Step>
 
-        {/* Step 2 */}
         <Step n={2} title="Paste the copied JSON here and generate your link">
           <textarea
             value={json}
