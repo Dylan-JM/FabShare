@@ -6,31 +6,42 @@ import { parseAssets } from "@/lib/parser";
 import type { FabAsset } from "@/lib/types";
 import CopyButton from "./CopyButton";
 
-const INTERCEPTOR = `const _fetch = window.fetch;
+const INTERCEPTOR = `// Intercept fetch
 window._fabData = [];
+const _fetch = window.fetch;
 window.fetch = async (...args) => {
   const res = await _fetch(...args);
-  const clone = res.clone();
-  try {
-    const j = await clone.json();
-    if (j?.results?.length) window._fabData.push(...j.results);
-  } catch {}
+  try { const j = await res.clone().json(); if (j?.results?.length) window._fabData.push(...j.results); } catch {}
   return res;
 };
-console.log('✅ Interceptor active. Refresh the page now, then scroll your full library.');`;
+// Intercept XHR (Fab may use either)
+const _open = XMLHttpRequest.prototype.open;
+const _send = XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.open = function(...a) { this._url = a[1]; return _open.apply(this, a); };
+XMLHttpRequest.prototype.send = function(...a) {
+  this.addEventListener('load', function() {
+    try { const j = JSON.parse(this.responseText); if (j?.results?.length) window._fabData.push(...j.results); } catch {}
+  });
+  return _send.apply(this, a);
+};
+console.log('✅ Interceptor active. NOW REFRESH THE PAGE, scroll your full library, then run Step 2.');`;
 
-const COLLECTOR = `const seen = new Set();
-const assets = window._fabData
-  .filter(item => { if (seen.has(item.uid)) return false; seen.add(item.uid); return true; })
-  .map(item => ({
-    name: item.title,
-    category: item.categories?.[0]?.name ?? 'Uncategorized',
-    thumbnail: item.thumbnail_url ?? '',
-    url: \`https://www.fab.com/listings/\${item.uid}\`,
-    price: item.price_range ?? 'Free',
-  }));
-copy(JSON.stringify(assets));
-console.log(\`✅ Copied \${assets.length} assets. Paste into FabShare.\`);`;
+const COLLECTOR = `if (!window._fabData?.length) {
+  console.error('❌ No data captured. You must: (1) paste the Step 1 script, (2) REFRESH THE PAGE, (3) scroll your full library, then run this.');
+} else {
+  const seen = new Set();
+  const assets = window._fabData
+    .filter(item => { if (seen.has(item.uid)) return false; seen.add(item.uid); return true; })
+    .map(item => ({
+      name: item.title,
+      category: item.categories?.[0]?.name ?? 'Uncategorized',
+      thumbnail: item.thumbnail_url ?? '',
+      url: \`https://www.fab.com/listings/\${item.uid}\`,
+      price: item.price_range ?? 'Free',
+    }));
+  copy(JSON.stringify(assets));
+  console.log(\`✅ Copied \${assets.length} assets. Paste into FabShare.\`);
+}`;
 
 const DEMO: FabAsset[] = [
   { name: "Modular Dungeon Pack", category: "Environments", thumbnail: "", url: "https://www.fab.com", price: "$49.99" },
