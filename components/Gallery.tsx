@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FabAsset } from "@/lib/types";
 
 interface GalleryProps {
@@ -20,7 +20,19 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
   const [selectedSub, setSelectedSub] = useState<string | null>(null);
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
-  const [linkCopied, setLinkCopied] = useState(false);
+
+  // bit.ly state
+  const [bitlyToken, setBitlyToken] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [shortUrl, setShortUrl] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState("");
+  const [shortCopied, setShortCopied] = useState(false);
+
+  useEffect(() => {
+    setBitlyToken(localStorage.getItem("fabshare_bitly_token") || "");
+  }, []);
 
   const categoryTree = useMemo(() => {
     const tree: Record<string, { count: number; subs: Record<string, number> }> = {};
@@ -51,10 +63,54 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
     });
   }, [assets, search, selectedCat, selectedSub]);
 
-  const copyLink = async () => {
-    await navigator.clipboard.writeText(window.location.href);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
+  const doShorten = async (token: string) => {
+    setIsGenerating(true);
+    setGenerateError("");
+    try {
+      const res = await fetch("https://api-ssl.bitly.com/v4/shorten", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ long_url: window.location.href }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          setBitlyToken("");
+          localStorage.removeItem("fabshare_bitly_token");
+          setShowTokenInput(true);
+        }
+        throw new Error((data as { message?: string }).message || `bit.ly error ${res.status}`);
+      }
+      const link = (data as { link: string }).link;
+      setShortUrl(link);
+      await navigator.clipboard.writeText(link).catch(() => {});
+      setShortCopied(true);
+      setTimeout(() => setShortCopied(false), 2500);
+    } catch (e) {
+      setGenerateError(e instanceof Error ? e.message : "Failed to generate link");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateLink = () => {
+    setGenerateError("");
+    setShortUrl("");
+    if (bitlyToken) {
+      doShorten(bitlyToken);
+    } else {
+      setTokenInput("");
+      setShowTokenInput(true);
+    }
+  };
+
+  const saveTokenAndGenerate = () => {
+    const token = tokenInput.trim();
+    if (!token) return;
+    localStorage.setItem("fabshare_bitly_token", token);
+    setBitlyToken(token);
+    setShowTokenInput(false);
+    doShorten(token);
   };
 
   const handleCatClick = (cat: string) => {
@@ -103,22 +159,110 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
           onBlur={e => (e.target.style.borderColor = "#ffffff0f")}
         />
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, position: "relative" }}>
           <span style={{ fontSize: 13, color: "#6b6b80", whiteSpace: "nowrap" }}>
             {filtered.length} of {assets.length}
           </span>
-          <button
-            onClick={copyLink}
-            style={{
-              background: "transparent", border: "1px solid #ffffff0f", color: "#6b6b80",
-              padding: "6px 14px", borderRadius: 8, fontFamily: "inherit", fontSize: 13,
-              cursor: "pointer", transition: "all .15s", whiteSpace: "nowrap",
-            }}
-            onMouseEnter={e => { (e.target as HTMLButtonElement).style.borderColor = "#e8622a"; (e.target as HTMLButtonElement).style.color = "#e8622a"; }}
-            onMouseLeave={e => { (e.target as HTMLButtonElement).style.borderColor = "#ffffff0f"; (e.target as HTMLButtonElement).style.color = "#6b6b80"; }}
-          >
-            {linkCopied ? "✓ Copied!" : "🔗 Copy link"}
-          </button>
+
+          {shortUrl ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <a
+                href={shortUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 13, color: "#e8622a", fontFamily: "monospace", whiteSpace: "nowrap" }}
+              >
+                {shortUrl}
+              </a>
+              <button
+                onClick={() => { navigator.clipboard.writeText(shortUrl); setShortCopied(true); setTimeout(() => setShortCopied(false), 2500); }}
+                style={{ background: "transparent", border: "1px solid #ffffff0f", color: "#6b6b80", padding: "5px 12px", borderRadius: 8, fontFamily: "inherit", fontSize: 12, cursor: "pointer" }}
+              >
+                {shortCopied ? "✓ Copied!" : "Copy"}
+              </button>
+              <button
+                onClick={() => { setShortUrl(""); setGenerateError(""); }}
+                title="Clear"
+                style={{ background: "none", border: "none", color: "#6b6b80", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleGenerateLink}
+              disabled={isGenerating}
+              style={{
+                background: "#e8622a", color: "#fff", border: "none",
+                padding: "7px 16px", borderRadius: 8, fontFamily: "inherit", fontSize: 13,
+                cursor: isGenerating ? "not-allowed" : "pointer",
+                opacity: isGenerating ? 0.6 : 1,
+                transition: "opacity .15s", whiteSpace: "nowrap",
+              }}
+            >
+              {isGenerating ? "Generating…" : "Generate Shareable Link"}
+            </button>
+          )}
+
+          {generateError && !showTokenInput && (
+            <span style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, fontSize: 12, color: "#e8622a", whiteSpace: "nowrap", background: "#0a0a0c", padding: "4px 8px", borderRadius: 6 }}>
+              {generateError}
+            </span>
+          )}
+
+          {/* bit.ly token input popover */}
+          {showTokenInput && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 10px)", right: 0, zIndex: 200,
+              background: "#18181f", border: "1px solid #ffffff1a", borderRadius: 12,
+              padding: 20, width: 310, boxShadow: "0 12px 40px #00000090",
+            }}>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "#e8e8ee", marginBottom: 6 }}>
+                bit.ly access token
+              </p>
+              <p style={{ fontSize: 12, color: "#6b6b80", marginBottom: 12, lineHeight: 1.5 }}>
+                Get one free at{" "}
+                <a href="https://app.bitly.com/settings/api" target="_blank" rel="noopener noreferrer" style={{ color: "#e8622a" }}>
+                  app.bitly.com → Settings → API
+                </a>
+                . Saved to this browser only.
+              </p>
+              <input
+                autoFocus
+                type="password"
+                value={tokenInput}
+                onChange={e => setTokenInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && saveTokenAndGenerate()}
+                placeholder="Paste token here…"
+                style={{
+                  width: "100%", background: "#111116", border: "1px solid #ffffff1a",
+                  borderRadius: 7, padding: "8px 12px", color: "#e8e8ee",
+                  fontFamily: "inherit", fontSize: 13, outline: "none", marginBottom: 8,
+                  boxSizing: "border-box",
+                }}
+                onFocus={e => (e.target.style.borderColor = "#e8622a")}
+                onBlur={e => (e.target.style.borderColor = "#ffffff1a")}
+              />
+              {generateError && (
+                <p style={{ fontSize: 12, color: "#e8622a", marginBottom: 8 }}>{generateError}</p>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { setShowTokenInput(false); setGenerateError(""); }}
+                  style={{ flex: 1, padding: "8px", background: "none", border: "1px solid #ffffff1a", borderRadius: 7, color: "#6b6b80", cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveTokenAndGenerate}
+                  disabled={!tokenInput.trim()}
+                  style={{ flex: 1, padding: "8px", background: "#e8622a", border: "none", borderRadius: 7, color: "#fff", cursor: tokenInput.trim() ? "pointer" : "not-allowed", opacity: tokenInput.trim() ? 1 : 0.4, fontFamily: "inherit", fontSize: 13, fontWeight: 500 }}
+                >
+                  Save & Generate
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -135,22 +279,15 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
           paddingTop: 8,
           paddingBottom: 32,
         }}>
-          {/* All */}
           <button
             onClick={() => { setSelectedCat(null); setSelectedSub(null); }}
             style={{
-              width: "100%",
-              padding: "8px 20px",
+              width: "100%", padding: "8px 20px",
               background: selectedCat === null ? "#e8622a12" : "none",
               border: "none",
               color: selectedCat === null ? "#e8622a" : "#e8e8ee",
-              textAlign: "left",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              cursor: "pointer",
-              fontSize: 13,
-              fontFamily: "inherit",
+              textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center",
+              cursor: "pointer", fontSize: 13, fontFamily: "inherit",
               fontWeight: selectedCat === null ? 500 : 400,
             }}
           >
@@ -220,8 +357,7 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
                         key={sub}
                         onClick={() => { setSelectedCat(cat); setSelectedSub(sub); }}
                         style={{
-                          width: "100%",
-                          padding: "5px 14px 5px 40px",
+                          width: "100%", padding: "5px 14px 5px 40px",
                           background: isSubSelected ? "#e8622a12" : "none",
                           border: "none",
                           color: isSubSelected ? "#e8622a" : "#9090a8",
