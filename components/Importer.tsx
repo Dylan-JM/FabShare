@@ -6,42 +6,55 @@ import { parseAssets } from "@/lib/parser";
 import type { FabAsset } from "@/lib/types";
 import CopyButton from "./CopyButton";
 
-const INTERCEPTOR = `// Intercept fetch
-window._fabData = [];
-const _fetch = window.fetch;
-window.fetch = async (...args) => {
-  const res = await _fetch(...args);
-  try { const j = await res.clone().json(); if (j?.results?.length) window._fabData.push(...j.results); } catch {}
-  return res;
-};
-// Intercept XHR (Fab may use either)
-const _open = XMLHttpRequest.prototype.open;
-const _send = XMLHttpRequest.prototype.send;
-XMLHttpRequest.prototype.open = function(...a) { this._url = a[1]; return _open.apply(this, a); };
-XMLHttpRequest.prototype.send = function(...a) {
-  this.addEventListener('load', function() {
-    try { const j = JSON.parse(this.responseText); if (j?.results?.length) window._fabData.push(...j.results); } catch {}
-  });
-  return _send.apply(this, a);
-};
-console.log('✅ Interceptor active. NOW REFRESH THE PAGE, scroll your full library, then run Step 2.');`;
+// Single script — no refresh needed.
+// Uses the Performance API to find the endpoint Fab already called when the
+// page loaded, then paginates through it directly using the active session.
+const SCRAPER = `(async () => {
+  // Find the endpoint Fab already used to load this page
+  const urls = performance.getEntriesByType('resource')
+    .map(r => r.name)
+    .filter(u => u.includes('www.fab.com') && u.includes('limit='));
 
-const COLLECTOR = `if (!window._fabData?.length) {
-  console.error('❌ No data captured. You must: (1) paste the Step 1 script, (2) REFRESH THE PAGE, (3) scroll your full library, then run this.');
-} else {
-  const seen = new Set();
-  const assets = window._fabData
-    .filter(item => { if (seen.has(item.uid)) return false; seen.add(item.uid); return true; })
-    .map(item => ({
-      name: item.title,
-      category: item.categories?.[0]?.name ?? 'Uncategorized',
-      thumbnail: item.thumbnail_url ?? '',
-      url: \`https://www.fab.com/listings/\${item.uid}\`,
-      price: item.price_range ?? 'Free',
-    }));
+  const raw = urls.find(u => /\\/i\\/.+limit=/.test(u)) || urls[0];
+
+  if (!raw) {
+    console.error('❌ Could not detect the API endpoint. Make sure you are on fab.com/library and the page has fully loaded.');
+    return;
+  }
+
+  const base = new URL(raw);
+  base.searchParams.set('limit', '48');
+  base.searchParams.set('offset', '0');
+
+  const all = [];
+  let next = base.toString();
+
+  while (next) {
+    const r = await fetch(next, { credentials: 'include' });
+    if (!r.ok) { console.error('Request failed:', r.status, next); break; }
+    const j = await r.json();
+    if (!j.results?.length) break;
+    all.push(...j.results);
+    next = j.next || null;
+    console.log(\`📦 \${all.length} assets loaded...\`);
+  }
+
+  if (!all.length) {
+    console.error('❌ No assets returned. Are you logged in and on fab.com/library?');
+    return;
+  }
+
+  const assets = all.map(item => ({
+    name: item.title,
+    category: item.categories?.[0]?.name ?? 'Uncategorized',
+    thumbnail: item.thumbnail_url ?? '',
+    url: \`https://www.fab.com/listings/\${item.uid}\`,
+    price: item.price_range ?? 'Free',
+  }));
+
   copy(JSON.stringify(assets));
-  console.log(\`✅ Copied \${assets.length} assets. Paste into FabShare.\`);
-}`;
+  console.log(\`✅ Copied \${assets.length} assets! Paste into FabShare.\`);
+})();`;
 
 const DEMO: FabAsset[] = [
   { name: "Modular Dungeon Pack", category: "Environments", thumbnail: "", url: "https://www.fab.com", price: "$49.99" },
@@ -64,7 +77,6 @@ export default function Importer({ onImport }: ImporterProps) {
     setError("");
     try {
       const assets = parseAssets(raw);
-      // Encode into URL hash so the gallery is shareable
       const hash = encode(assets);
       window.location.hash = hash;
       onImport(assets);
@@ -93,22 +105,22 @@ export default function Importer({ onImport }: ImporterProps) {
           Share Your Fab Library
         </h2>
         <p style={{ color: "#6b6b80", fontSize: 14, lineHeight: 1.7, marginBottom: 32 }}>
-          Run the scraper on <strong style={{ color: "#e8e8ee" }}>fab.com/library</strong>, paste the output below,
-          and get a shareable URL — no backend, just a link.
+          Run one script on <strong style={{ color: "#e8e8ee" }}>fab.com/library</strong>, paste the output,
+          and get a shareable URL — no backend, no accounts, just a link.
         </p>
 
         {/* Step 1 */}
-        <Step n={1} title="Paste this in the DevTools console, then refresh the page">
-          <CodeBlock code={INTERCEPTOR} />
+        <Step n={1} title='Go to fab.com/library, open DevTools (F12 → Console), paste and run this'>
+          <CodeBlock code={SCRAPER} />
+          <p style={{ fontSize: 12, color: "#6b6b80", marginTop: 10 }}>
+            The script finds Fab&apos;s API automatically and paginates through your full library.
+            Watch the console — it logs progress and copies the result to your clipboard when done.
+            <strong style={{ color: "#e8e8ee" }}> No refresh needed.</strong>
+          </p>
         </Step>
 
         {/* Step 2 */}
-        <Step n={2} title="Scroll your full library, then run this to collect the data">
-          <CodeBlock code={COLLECTOR} />
-        </Step>
-
-        {/* Step 3 */}
-        <Step n={3} title="Paste the output here and generate your shareable link">
+        <Step n={2} title="Paste the copied JSON here and generate your link">
           <textarea
             value={json}
             onChange={e => setJson(e.target.value)}
