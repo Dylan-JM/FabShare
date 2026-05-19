@@ -15,24 +15,13 @@ const dmSans = DM_Sans({
 
 export const metadata: Metadata = {
   title: "FabShare — Share Your Fab Library",
-  description:
-    "Share your Fab asset library with your team via a single URL. No backend, no accounts, just a link.",
-  openGraph: {
-    title: "FabShare — Share Your Fab Library",
-    description:
-      "Share your Fab asset library with your team via a single URL.",
-    type: "website",
-  },
+  description: "Share your Fab asset library with your team via a single URL. No backend, no accounts.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${bebasNeue.variable} ${dmSans.variable} antialiased`}>
+      <body className={`${bebasNeue.variable} ${dmSans.variable}`}>
         {children}
       </body>
     </html>

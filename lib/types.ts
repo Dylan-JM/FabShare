@@ -1,7 +1,9 @@
 export interface FabAsset {
-  title: string;
+  name: string;
   category: string;
-  thumbnail_url: string;
-  uid: string;
-  price_range: string;
+  thumbnail: string;
+  url: string;
+  price: string;
+  _index?: number;
+  _needsEnrich?: boolean;
 }
