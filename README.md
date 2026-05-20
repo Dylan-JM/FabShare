@@ -23,9 +23,10 @@ Go to [fab.com/library](https://www.fab.com/library), log in, and scroll all the
 Open DevTools (`F12 → Console`), copy the script from the app's **Step 1** panel, and paste it into the console.
 
 The scraper:
-- Collects listing UIDs from visible links on the page
-- Fetches each listing page concurrently (12 workers) to extract title, category, subcategory, thumbnail, and price
+- Walks every listing card in the DOM, extracting the name and thumbnail directly from the page (no extra fetch needed for those)
+- Fetches each listing page concurrently (12 workers) to get the full category path, price, and high-res thumbnail
 - Parses categories from `/category/slug/sub-slug` hrefs — same hierarchy Fab uses in its own sidebar
+- Marks any unavailable listings as **Discontinued** rather than dropping them (their card name/thumbnail are preserved from the DOM)
 
 Watch the console for progress (`20/340 done…`). When it finishes run `copy(window._fabResult)` in the console to copy the JSON.
 
@@ -34,6 +35,10 @@ Watch the console for progress (`20/340 done…`). When it finishes run `copy(wi
 Paste the JSON into the app and click **Generate Shareable Link**. A popover lets you optionally choose a custom name (e.g. `dylanslibrary`) — leave it blank for a random 8-character slug.
 
 Your link will be `yoursite.com/s/dylanslibrary`. It's automatically copied to your clipboard.
+
+### Building a group library
+
+Anyone viewing a shared library can click **+ Add your library** in the header, paste their own scraped JSON, and merge it in. Duplicates (matched by Fab listing URL) are skipped automatically. Once merged, click **Generate Shareable Link** to save the combined library as a new slug that everyone can access.
 
 ---
 

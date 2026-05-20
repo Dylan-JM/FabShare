@@ -34,12 +34,13 @@ const SCRAPER = `(async function scrapeFabLibrary() {
     };
   }
 
-  function parseListing(html, uid) {
+  function parseListing(html, uid, fallback) {
     const cats = extractCategoriesFromHtml(html);
     const title = html.match(/property="og:title"\\s+content="([^"]+)"/)?.[1]
                || html.match(/<title>([^<|]+)/)?.[1]?.trim()
+               || fallback.name
                || uid;
-    const thumb = html.match(/property="og:image"\\s+content="([^"]+)"/)?.[1] || "";
+    const thumb = html.match(/property="og:image"\\s+content="([^"]+)"/)?.[1] || fallback.thumbnail || "";
 
     let price = "";
     const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\\s\\S]*?)<\\/script>/);
@@ -64,22 +65,43 @@ const SCRAPER = `(async function scrapeFabLibrary() {
     };
   }
 
-  const seen = new Set();
+  // Walk each listing link in the library DOM and grab the name + thumb from the card
+  const cards = new Map();
   document.querySelectorAll("a[href*='/listings/']").forEach(a => {
-    const m = a.href.match(/listings\\/([a-f0-9-]{36})/i);
-    if (m && !seen.has(m[1])) seen.add(m[1]);
-  });
-  const uids = [...seen];
+    const m = a.getAttribute("href")?.match(/\\/listings\\/([a-f0-9-]{36})(\\/[^?#"]*)?/i);
+    if (!m || cards.has(m[1])) return;
+    const uid = m[1];
 
-  if (!uids.length) {
+    const card = a.closest("li, article, [class*='card'], [class*='Card'], [class*='item'], [class*='Item']") || a;
+
+    let name =
+      card.querySelector("[class*='title' i], [class*='Title' i], [class*='name' i], [class*='Name' i], h2, h3, h4")?.textContent?.trim()
+      || a.getAttribute("aria-label")?.trim()
+      || a.getAttribute("title")?.trim()
+      || a.textContent?.trim()
+      || "";
+
+    const img = card.querySelector("img");
+    const thumbnail = img?.getAttribute("src") || img?.getAttribute("data-src") || "";
+
+    cards.set(uid, {
+      path: \`/listings/\${uid}\${m[2] || ""}\`,
+      name: name.replace(/\\s+/g, " ").slice(0, 200),
+      thumbnail,
+    });
+  });
+
+  if (!cards.size) {
     console.error("❌ No listing links found. Scroll to the bottom of fab.com/library so all assets load, then re-run.");
     return;
   }
 
-  console.log(\`Found \${uids.length} listings. Fetching with concurrency...\`);
+  const entries = [...cards.entries()];
+  console.log(\`Found \${entries.length} listings. Fetching with concurrency 12...\`);
 
   const CONCURRENCY = 12;
   const assets = [];
+  const discontinued = [];
   let _debugged = false;
   let nextIdx = 0;
   let completed = 0;
@@ -87,40 +109,62 @@ const SCRAPER = `(async function scrapeFabLibrary() {
   async function worker() {
     while (true) {
       const idx = nextIdx++;
-      if (idx >= uids.length) return;
-      const uid = uids[idx];
+      if (idx >= entries.length) return;
+      const [uid, card] = entries[idx];
       try {
-        const html = await (await fetch(\`/listings/\${uid}\`)).text();
-        if (!_debugged) {
-          _debugged = true;
-          const raw = [...html.matchAll(/href="\\/category\\/([^"]+)"/g)].map(m => m[1]);
-          console.log("📦 Raw breadcrumb hrefs (first listing):", raw);
+        const res = await fetch(card.path);
+        if (!res.ok) {
+          discontinued.push(uid);
+          assets.push({
+            name: card.name || uid,
+            category: "Discontinued",
+            subcategory: "",
+            path: "Discontinued",
+            thumbnail: card.thumbnail,
+            url: \`https://www.fab.com/listings/\${uid}\`,
+            price: "",
+          });
+        } else {
+          const html = await res.text();
+          if (!_debugged) {
+            _debugged = true;
+            const raw = [...html.matchAll(/href="\\/category\\/([^"]+)"/g)].map(m => m[1]);
+            console.log("📦 Raw breadcrumb hrefs (first listing):", raw);
+          }
+          assets.push(parseListing(html, uid, card));
         }
-        assets.push(parseListing(html, uid));
       } catch (e) {
-        console.warn(\`Failed to fetch \${uid}:\`, e.message);
+        discontinued.push(uid);
+        assets.push({
+          name: card.name || uid,
+          category: "Discontinued",
+          subcategory: "",
+          path: "Discontinued",
+          thumbnail: card.thumbnail,
+          url: \`https://www.fab.com/listings/\${uid}\`,
+          price: "",
+        });
       }
       completed++;
-      if (completed % 20 === 0 || completed === uids.length) {
-        console.log(\`  \${completed}/\${uids.length} done...\`);
+      if (completed % 20 === 0 || completed === entries.length) {
+        console.log(\`  \${completed}/\${entries.length} done...\`);
       }
     }
   }
 
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-  if (!assets.length) {
-    console.error("❌ No assets found.");
-    return;
-  }
-
   const output = JSON.stringify(assets, null, 2);
   window._fabResult = output;
+  window._fabDiscontinued = discontinued;
   const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
   console.log(\`\\n✅ \${assets.length} assets ready in \${elapsed}s!\`);
-  console.log(output);
+  if (discontinued.length) {
+    console.log(\`📦 \${discontinued.length} marked as Discontinued (inspect with window._fabDiscontinued)\`);
+  }
+  console.log("\\n" + output);
   console.log("\\n💡 To copy: run this in the console: copy(window._fabResult)");
-  console.log("💡 Or to download as a file, run:");
+  console.log("💡 To download as a file, run:");
   console.log(\`   const b=new Blob([window._fabResult],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='fab-library.json';a.click();\`);
 })();`;
 

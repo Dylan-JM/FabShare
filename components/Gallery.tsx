@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { FabAsset } from "@/lib/types";
+import { encode } from "@/lib/codec";
+import { parseAssets } from "@/lib/parser";
 
 interface GalleryProps {
   assets: FabAsset[];
@@ -13,7 +15,7 @@ interface IndexedAsset extends FabAsset {
 }
 
 export default function Gallery({ assets: initialAssets, onBack }: GalleryProps) {
-  const [assets] = useState<IndexedAsset[]>(() =>
+  const [assets, setAssets] = useState<IndexedAsset[]>(() =>
     initialAssets.map((a, i) => ({ ...a, _index: i }))
   );
   const [search, setSearch] = useState("");
@@ -27,6 +29,11 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
+
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeJson, setMergeJson] = useState("");
+  const [mergeError, setMergeError] = useState("");
+  const [mergeAdded, setMergeAdded] = useState(0);
 
   const categoryTree = useMemo(() => {
     const tree: Record<string, { count: number; subs: Record<string, number> }> = {};
@@ -87,6 +94,30 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
     }
   };
 
+  const handleMerge = () => {
+    setMergeError("");
+    try {
+      const incoming = parseAssets(mergeJson);
+      const existingUrls = new Set(assets.map(a => a.url));
+      const toAdd = incoming.filter(a => !existingUrls.has(a.url));
+      if (!toAdd.length) {
+        setMergeError("No new assets found — all are already in this library.");
+        return;
+      }
+      const merged: IndexedAsset[] = [
+        ...assets,
+        ...toAdd.map((a, i) => ({ ...a, _index: assets.length + i })),
+      ];
+      setAssets(merged);
+      window.location.hash = encode(merged);
+      setMergeAdded(toAdd.length);
+      setMergeJson("");
+      setShowMergeModal(false);
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : "Invalid data.");
+    }
+  };
+
   const handleCatClick = (cat: string) => {
     setSelectedCat(cat);
     setSelectedSub(null);
@@ -136,7 +167,26 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, position: "relative" }}>
           <span style={{ fontSize: 13, color: "#6b6b80", whiteSpace: "nowrap" }}>
             {filtered.length} of {assets.length}
+            {mergeAdded > 0 && (
+              <span style={{ marginLeft: 6, color: "#4caf8a", fontSize: 11 }}>
+                +{mergeAdded} added
+              </span>
+            )}
           </span>
+
+          <button
+            onClick={() => { setShowMergeModal(true); setMergeError(""); setMergeJson(""); }}
+            style={{
+              background: "transparent", border: "1px solid #ffffff1a",
+              color: "#9090a8", padding: "7px 14px", borderRadius: 8,
+              fontFamily: "inherit", fontSize: 13, cursor: "pointer",
+              whiteSpace: "nowrap", transition: "all .15s",
+            }}
+            onMouseEnter={e => { (e.currentTarget).style.borderColor = "#e8622a"; (e.currentTarget).style.color = "#e8622a"; }}
+            onMouseLeave={e => { (e.currentTarget).style.borderColor = "#ffffff1a"; (e.currentTarget).style.color = "#9090a8"; }}
+          >
+            + Add your library
+          </button>
 
           {shareUrl ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -378,6 +428,80 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
           )}
         </div>
       </div>
+
+      {/* Merge modal */}
+      {showMergeModal && (
+        <div
+          onClick={() => setShowMergeModal(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 300,
+            background: "#00000080", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "#18181f", border: "1px solid #ffffff1a",
+              borderRadius: 14, padding: 28, width: "100%", maxWidth: 520,
+              boxShadow: "0 24px 80px #00000090",
+            }}
+          >
+            <p style={{ fontSize: 17, fontWeight: 600, color: "#e8e8ee", marginBottom: 6 }}>
+              Add your library
+            </p>
+            <p style={{ fontSize: 13, color: "#6b6b80", lineHeight: 1.6, marginBottom: 16 }}>
+              Run the scraper on your{" "}
+              <a href="https://www.fab.com/library" target="_blank" rel="noopener noreferrer" style={{ color: "#e8622a" }}>
+                fab.com/library
+              </a>
+              {" "}and paste the JSON below. Your assets will be merged in — duplicates are skipped automatically.
+            </p>
+            <textarea
+              autoFocus
+              value={mergeJson}
+              onChange={e => setMergeJson(e.target.value)}
+              placeholder="Paste your JSON here…"
+              rows={8}
+              style={{
+                width: "100%", background: "#111116", border: "1px solid #ffffff1a",
+                borderRadius: 8, color: "#e8e8ee", fontFamily: "Courier New, monospace",
+                fontSize: 12, padding: 12, resize: "vertical", outline: "none",
+                boxSizing: "border-box", transition: "border-color .2s",
+              }}
+              onFocus={e => (e.target.style.borderColor = "#e8622a")}
+              onBlur={e => (e.target.style.borderColor = "#ffffff1a")}
+            />
+            {mergeError && (
+              <p style={{ fontSize: 12, color: "#e8622a", marginTop: 8 }}>{mergeError}</p>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button
+                onClick={() => setShowMergeModal(false)}
+                style={{
+                  flex: 1, padding: "9px", background: "none", border: "1px solid #ffffff1a",
+                  borderRadius: 8, color: "#6b6b80", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMerge}
+                disabled={!mergeJson.trim()}
+                style={{
+                  flex: 2, padding: "9px", background: "#e8622a", border: "none",
+                  borderRadius: 8, color: "#fff", fontFamily: "inherit", fontSize: 13,
+                  fontWeight: 500, cursor: mergeJson.trim() ? "pointer" : "not-allowed",
+                  opacity: mergeJson.trim() ? 1 : 0.4, transition: "opacity .15s",
+                }}
+              >
+                Merge into library →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
