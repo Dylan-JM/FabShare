@@ -26,10 +26,8 @@ export default function Gallery({ assets: initialAssets, onBack, currentSlug }: 
 
   const [showSlugInput, setShowSlugInput] = useState(false);
   const [slugInput, setSlugInput] = useState("");
-  const [shareUrl, setShareUrl] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
-  const [shareCopied, setShareCopied] = useState(false);
 
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeJson, setMergeJson] = useState("");
@@ -68,7 +66,6 @@ export default function Gallery({ assets: initialAssets, onBack, currentSlug }: 
   const doGenerate = async () => {
     setIsGenerating(true);
     setGenerateError("");
-    setShareUrl("");
     const hash = window.location.hash.slice(1);
     const body: { hash: string; slug?: string } = { hash };
     const trimmed = slugInput.trim().toLowerCase();
@@ -82,12 +79,8 @@ export default function Gallery({ assets: initialAssets, onBack, currentSlug }: 
       const data = await res.json() as { slug?: string; error?: string };
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       const url = `${window.location.origin}/s/${data.slug!}`;
-      setShareUrl(url);
-      setShowSlugInput(false);
-      setSlugInput("");
       await navigator.clipboard.writeText(url).catch(() => {});
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 2500);
+      window.location.replace(url);
     } catch (e) {
       setGenerateError(e instanceof Error ? e.message : "Failed to generate link");
     } finally {
@@ -216,45 +209,19 @@ export default function Gallery({ assets: initialAssets, onBack, currentSlug }: 
             + Add your library
           </button>
 
-          {shareUrl ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <a
-                href={shareUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ fontSize: 13, color: "#e8622a", fontFamily: "monospace", whiteSpace: "nowrap" }}
-              >
-                {shareUrl}
-              </a>
-              <button
-                onClick={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 2500); }}
-                style={{ background: "transparent", border: "1px solid #ffffff0f", color: "#6b6b80", padding: "5px 12px", borderRadius: 8, fontFamily: "inherit", fontSize: 12, cursor: "pointer" }}
-              >
-                {shareCopied ? "✓ Copied!" : "Copy"}
-              </button>
-              <button
-                onClick={() => { setShareUrl(""); setGenerateError(""); }}
-                title="Clear"
-                style={{ background: "none", border: "none", color: "#6b6b80", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}
-              >
-                ×
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => { setShowSlugInput(v => !v); setGenerateError(""); }}
-              disabled={isGenerating}
-              style={{
-                background: "#e8622a", color: "#fff", border: "none",
-                padding: "7px 16px", borderRadius: 8, fontFamily: "inherit", fontSize: 13,
-                cursor: isGenerating ? "not-allowed" : "pointer",
-                opacity: isGenerating ? 0.6 : 1,
-                transition: "opacity .15s", whiteSpace: "nowrap",
-              }}
-            >
-              {isGenerating ? "Generating…" : "Generate Shareable Link"}
-            </button>
-          )}
+          <button
+            onClick={() => { setShowSlugInput(v => !v); setGenerateError(""); }}
+            disabled={isGenerating}
+            style={{
+              background: "#e8622a", color: "#fff", border: "none",
+              padding: "7px 16px", borderRadius: 8, fontFamily: "inherit", fontSize: 13,
+              cursor: isGenerating ? "not-allowed" : "pointer",
+              opacity: isGenerating ? 0.6 : 1,
+              transition: "opacity .15s", whiteSpace: "nowrap",
+            }}
+          >
+            {isGenerating ? "Generating…" : "Generate Shareable Link"}
+          </button>
 
           {generateError && !showSlugInput && (
             <span style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, fontSize: 12, color: "#e8622a", whiteSpace: "nowrap", background: "#0a0a0c", padding: "4px 8px", borderRadius: 6 }}>
