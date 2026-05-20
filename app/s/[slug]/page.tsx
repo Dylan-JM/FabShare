@@ -53,5 +53,5 @@ export default function SharedPage() {
     );
   }
 
-  return <Gallery assets={assets} onBack={() => router.push("/")} />;
+  return <Gallery assets={assets} onBack={() => router.push("/")} currentSlug={slug} />;
 }

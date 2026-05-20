@@ -38,7 +38,9 @@ Your link will be `yoursite.com/s/dylanslibrary`. It's automatically copied to y
 
 ### Building a group library
 
-Anyone viewing a shared library can click **+ Add your library** in the header, paste their own scraped JSON, and merge it in. Duplicates (matched by Fab listing URL) are skipped automatically. Once merged, click **Generate Shareable Link** to save the combined library as a new slug that everyone can access.
+Anyone viewing a shared library can click **+ Add your library** in the header, paste their own scraped JSON, and merge it in. Duplicates (matched by Fab listing URL) are skipped automatically.
+
+When viewing a slug-based link (`/s/name`), clicking **Merge & update link →** updates that same slug in the database — the URL stays identical and immediately serves the combined library to anyone who opens it. No new link needed.
 
 ---
 

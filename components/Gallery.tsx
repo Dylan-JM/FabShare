@@ -8,13 +8,14 @@ import { parseAssets } from "@/lib/parser";
 interface GalleryProps {
   assets: FabAsset[];
   onBack: () => void;
+  currentSlug?: string;
 }
 
 interface IndexedAsset extends FabAsset {
   _index: number;
 }
 
-export default function Gallery({ assets: initialAssets, onBack }: GalleryProps) {
+export default function Gallery({ assets: initialAssets, onBack, currentSlug }: GalleryProps) {
   const [assets, setAssets] = useState<IndexedAsset[]>(() =>
     initialAssets.map((a, i) => ({ ...a, _index: i }))
   );
@@ -94,28 +95,55 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
     }
   };
 
-  const handleMerge = () => {
+  const handleMerge = async () => {
     setMergeError("");
+    let incoming;
     try {
-      const incoming = parseAssets(mergeJson);
-      const existingUrls = new Set(assets.map(a => a.url));
-      const toAdd = incoming.filter(a => !existingUrls.has(a.url));
-      if (!toAdd.length) {
-        setMergeError("No new assets found — all are already in this library.");
-        return;
-      }
-      const merged: IndexedAsset[] = [
-        ...assets,
-        ...toAdd.map((a, i) => ({ ...a, _index: assets.length + i })),
-      ];
-      setAssets(merged);
-      window.location.hash = encode(merged);
-      setMergeAdded(toAdd.length);
-      setMergeJson("");
-      setShowMergeModal(false);
+      incoming = parseAssets(mergeJson);
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : "Invalid data.");
+      return;
     }
+
+    const existingUrls = new Set(assets.map(a => a.url));
+    const toAdd = incoming.filter(a => !existingUrls.has(a.url));
+    if (!toAdd.length) {
+      setMergeError("No new assets found — all are already in this library.");
+      return;
+    }
+
+    const merged: IndexedAsset[] = [
+      ...assets,
+      ...toAdd.map((a, i) => ({ ...a, _index: assets.length + i })),
+    ];
+    const newHash = encode(merged);
+
+    if (currentSlug) {
+      // Update the existing slug in KV so the same URL now serves the merged library
+      try {
+        const res = await fetch(`/api/share/${currentSlug}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hash: newHash }),
+        });
+        if (!res.ok) {
+          const data = await res.json() as { error?: string };
+          setMergeError(data.error || `Update failed (${res.status})`);
+          return;
+        }
+      } catch {
+        setMergeError("Network error — could not update the link.");
+        return;
+      }
+    } else {
+      // No slug — just update the URL hash so Generate Link captures the merged state
+      window.location.hash = newHash;
+    }
+
+    setAssets(merged);
+    setMergeAdded(toAdd.length);
+    setMergeJson("");
+    setShowMergeModal(false);
   };
 
   const handleCatClick = (cat: string) => {
@@ -496,7 +524,7 @@ export default function Gallery({ assets: initialAssets, onBack }: GalleryProps)
                   opacity: mergeJson.trim() ? 1 : 0.4, transition: "opacity .15s",
                 }}
               >
-                Merge into library →
+                {currentSlug ? "Merge & update link →" : "Merge into library →"}
               </button>
             </div>
           </div>
